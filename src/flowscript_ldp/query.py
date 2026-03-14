@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, overload
 
 from .ir import IR, Node, Relationship, RelationType, State
 
@@ -33,6 +33,9 @@ class CausalChainNode:
     content: str
     relationship_type: str
 
+    def __repr__(self) -> str:
+        return f"CausalChainNode(depth={self.depth}, content={self.content!r})"
+
 
 @dataclass
 class CausalAncestry:
@@ -41,11 +44,49 @@ class CausalAncestry:
     root_cause: dict[str, Any]  # {id, content, is_root}
     metadata: dict[str, Any]  # {total_ancestors, max_depth, has_multiple_paths}
 
+    def __repr__(self) -> str:
+        chain_str = " → ".join(n.content for n in self.causal_chain)
+        if chain_str:
+            chain_str += f" → {self.target['content']}"
+        else:
+            chain_str = self.target["content"]
+        return f"CausalAncestry({chain_str})"
+
+
+@dataclass
+class CausalTreeNode:
+    """Recursive tree showing all causal paths to a node."""
+
+    id: str
+    content: str
+    relationship_type: Optional[str] = None
+    parents: list[CausalTreeNode] = field(default_factory=list)
+
+    def __repr__(self) -> str:
+        n = len(self.parents)
+        return f"CausalTreeNode({self.content!r}, {n} parent{'s' if n != 1 else ''})"
+
+
+@dataclass
+class CausalTree:
+    """Tree format for why() — shows all causal paths, not just one chain."""
+
+    target: dict[str, str]  # {id, content}
+    tree: CausalTreeNode
+    metadata: dict[str, Any]
+
+    def __repr__(self) -> str:
+        return f"CausalTree(target={self.target['content']!r}, ancestors={self.metadata['total_ancestors']})"
+
 
 @dataclass
 class MinimalWhy:
     root_cause: str
     chain: list[str]
+
+    def __repr__(self) -> str:
+        chain_str = " → ".join(self.chain) if self.chain else self.root_cause
+        return f"MinimalWhy({chain_str})"
 
 
 @dataclass
@@ -57,12 +98,19 @@ class ImpactConsequence:
     has_tension: bool = False
     tension_axis: Optional[str] = None
 
+    def __repr__(self) -> str:
+        t = f" ⚡{self.tension_axis}" if self.tension_axis else ""
+        return f"ImpactConsequence(d{self.depth}: {self.content!r}{t})"
+
 
 @dataclass
 class TensionInfo:
     axis: str
     source: dict[str, str]  # {id, content}
     target: dict[str, str]  # {id, content}
+
+    def __repr__(self) -> str:
+        return f"TensionInfo({self.source['content']!r} vs {self.target['content']!r} [{self.axis}])"
 
 
 @dataclass
@@ -72,6 +120,26 @@ class ImpactAnalysis:
     tensions_in_impact_zone: list[TensionInfo]
     metadata: dict[str, Any]
 
+    def __repr__(self) -> str:
+        d = len(self.impact_tree.get("direct_consequences", []))
+        i = len(self.impact_tree.get("indirect_consequences", []))
+        t = len(self.tensions_in_impact_zone)
+        return f"ImpactAnalysis({self.source['content']!r}: {d} direct, {i} indirect, {t} tensions)"
+
+
+@dataclass
+class ImpactList:
+    """Flat list format for what_if() — all consequences sorted by depth."""
+
+    source: dict[str, str]
+    consequences: list[ImpactConsequence]
+    tensions_in_impact_zone: list[TensionInfo]
+    metadata: dict[str, Any]
+
+    def __repr__(self) -> str:
+        n = len(self.consequences)
+        return f"ImpactList({self.source['content']!r}: {n} consequence{'s' if n != 1 else ''})"
+
 
 @dataclass
 class ImpactSummary:
@@ -80,12 +148,18 @@ class ImpactSummary:
     risks: list[str]
     key_tradeoff: Optional[str]
 
+    def __repr__(self) -> str:
+        return f"ImpactSummary({self.impact_summary})"
+
 
 @dataclass
 class TensionDetail:
     source: dict[str, str]
     target: dict[str, str]
     context: Optional[list[dict[str, str]]] = None
+
+    def __repr__(self) -> str:
+        return f"TensionDetail({self.source['content']!r} vs {self.target['content']!r})"
 
 
 @dataclass
@@ -94,6 +168,11 @@ class TensionsResult:
     tensions_by_node: Optional[dict[str, list[TensionDetail]]] = None
     tensions: Optional[list[TensionDetail]] = None
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    def __repr__(self) -> str:
+        n = self.metadata.get("total_tensions", 0)
+        axes = self.metadata.get("unique_axes", [])
+        return f"TensionsResult({n} tension{'s' if n != 1 else ''}, axes={axes})"
 
 
 @dataclass
@@ -104,11 +183,19 @@ class BlockerDetail:
     transitive_causes: Optional[list[dict[str, str]]] = None
     transitive_effects: Optional[list[dict[str, str]]] = None
 
+    def __repr__(self) -> str:
+        days = self.blocked_state.get("days_blocked", "?")
+        return f"BlockerDetail({self.node['content']!r}, {days}d, impact={self.impact_score})"
+
 
 @dataclass
 class BlockedResult:
     blockers: list[BlockerDetail]
     metadata: dict[str, Any]
+
+    def __repr__(self) -> str:
+        n = self.metadata.get("total_blockers", 0)
+        return f"BlockedResult({n} blocker{'s' if n != 1 else ''})"
 
 
 @dataclass
@@ -122,6 +209,10 @@ class AlternativeDetail:
     consequences: Optional[list[dict[str, str]]] = None
     tensions: Optional[list[TensionInfo]] = None
 
+    def __repr__(self) -> str:
+        mark = "✓" if self.chosen else "○"
+        return f"AlternativeDetail({mark} {self.content!r})"
+
 
 @dataclass
 class AlternativesResultComparison:
@@ -129,6 +220,11 @@ class AlternativesResultComparison:
     question: dict[str, str]  # {id, content}
     alternatives: list[AlternativeDetail]
     decision_summary: dict[str, Any]
+
+    def __repr__(self) -> str:
+        chosen = self.decision_summary.get("chosen", "none")
+        n = len(self.alternatives)
+        return f"AlternativesResult(comparison: {n} options, chosen={chosen!r})"
 
 
 @dataclass
@@ -139,6 +235,9 @@ class AlternativesResultSimple:
     chosen: Optional[str]
     reason: Optional[str]
 
+    def __repr__(self) -> str:
+        return f"AlternativesResult(simple: chosen={self.chosen!r})"
+
 
 @dataclass
 class TreeAlternative:
@@ -148,12 +247,20 @@ class TreeAlternative:
     children: list[TreeAlternative] = field(default_factory=list)
     rejection_reasons: Optional[list[str]] = None
 
+    def __repr__(self) -> str:
+        mark = "✓" if self.chosen else "○"
+        kids = f", {len(self.children)} children" if self.children else ""
+        return f"TreeAlternative({mark} {self.content!r}{kids})"
+
 
 @dataclass
 class AlternativesResultTree:
     format: str  # "tree"
     question: dict[str, str]
     alternatives: list[TreeAlternative]
+
+    def __repr__(self) -> str:
+        return f"AlternativesResult(tree: {len(self.alternatives)} alternatives)"
 
 
 # Union type for alternatives results
@@ -223,8 +330,14 @@ class QueryEngine:
         max_depth: Optional[int] = None,
         include_correlations: bool = False,
         format: str = "chain",
-    ) -> CausalAncestry | MinimalWhy:
-        """Trace causal ancestry: why does this node exist?"""
+    ) -> CausalAncestry | CausalTree | MinimalWhy:
+        """Trace causal ancestry: why does this node exist?
+
+        Formats:
+            chain: Linear causal chain from root to target (default)
+            tree: Full tree showing ALL causal paths (multiple ancestors visible)
+            minimal: Just root cause + content strings
+        """
         rel_types = [RelationType.DERIVES_FROM, RelationType.CAUSES]
         if include_correlations:
             rel_types.append(RelationType.EQUIVALENT)
@@ -235,14 +348,33 @@ class QueryEngine:
         if target_node is None:
             raise ValueError(f"Node not found: {node_id}")
 
-        chain, root_cause = self._build_causal_chain(node_id, ancestors, rel_types)
-
         if format == "minimal":
+            chain, root_cause = self._build_causal_chain(
+                node_id, ancestors, rel_types
+            )
             return MinimalWhy(
                 root_cause=root_cause.content,
                 chain=[n.node.content for n in chain],
             )
 
+        if format == "tree":
+            tree = self._build_causal_tree(node_id, rel_types, max_depth)
+            return CausalTree(
+                target={"id": target_node.id, "content": target_node.content},
+                tree=tree,
+                metadata={
+                    "total_ancestors": len(ancestors),
+                    "max_depth": max((a.depth for a in ancestors), default=0),
+                    "has_multiple_paths": self._has_multiple_paths(
+                        node_id, rel_types
+                    ),
+                },
+            )
+
+        # Default: chain format
+        chain, root_cause = self._build_causal_chain(
+            node_id, ancestors, rel_types
+        )
         return CausalAncestry(
             target={"id": target_node.id, "content": target_node.content},
             causal_chain=[
@@ -278,8 +410,14 @@ class QueryEngine:
         include_correlations: bool = False,
         include_temporal: bool = True,
         format: str = "tree",
-    ) -> ImpactAnalysis | ImpactSummary:
-        """Analyze downstream impact: what happens if this changes?"""
+    ) -> ImpactAnalysis | ImpactList | ImpactSummary:
+        """Analyze downstream impact: what happens if this changes?
+
+        Formats:
+            tree: Grouped by direct/indirect consequences (default)
+            list: Flat list of all consequences sorted by depth
+            summary: Human-readable summary with benefits/risks
+        """
         rel_types = [RelationType.CAUSES]
         if include_temporal:
             rel_types.append(RelationType.TEMPORAL)
@@ -292,9 +430,6 @@ class QueryEngine:
 
         descendants = self._traverse_forward(node_id, rel_types, max_depth)
 
-        # Build impact tree
-        impact_tree = self._build_impact_tree(descendants)
-
         # Find tensions in descendant subgraph
         desc_ids = {d.node.id for d in descendants}
         desc_ids.add(node_id)
@@ -304,9 +439,32 @@ class QueryEngine:
             d.relationship_type == RelationType.TEMPORAL.value for d in descendants
         )
 
+        metadata = {
+            "total_descendants": len(descendants),
+            "max_depth": max((d.depth for d in descendants), default=0),
+            "tension_count": len(tensions),
+            "has_temporal_consequences": has_temporal,
+        }
+
         if format == "summary":
             return self._build_impact_summary(source_node, descendants, tensions)
 
+        if format == "list":
+            # Flat list sorted by depth
+            impact_tree = self._build_impact_tree(descendants)
+            all_consequences = (
+                impact_tree["direct"] + impact_tree["indirect"]
+            )
+            all_consequences.sort(key=lambda c: c.depth)
+            return ImpactList(
+                source={"id": source_node.id, "content": source_node.content},
+                consequences=all_consequences,
+                tensions_in_impact_zone=tensions,
+                metadata=metadata,
+            )
+
+        # Default: tree format (grouped direct/indirect)
+        impact_tree = self._build_impact_tree(descendants)
         return ImpactAnalysis(
             source={"id": source_node.id, "content": source_node.content},
             impact_tree={
@@ -314,12 +472,7 @@ class QueryEngine:
                 "indirect_consequences": impact_tree["indirect"],
             },
             tensions_in_impact_zone=tensions,
-            metadata={
-                "total_descendants": len(descendants),
-                "max_depth": max((d.depth for d in descendants), default=0),
-                "tension_count": len(tensions),
-                "has_temporal_consequences": has_temporal,
-            },
+            metadata=metadata,
         )
 
     # =========================================================================
@@ -871,6 +1024,43 @@ class QueryEngine:
             current_id = next_rel.target
 
         return chain, root.node
+
+    def _build_causal_tree(
+        self,
+        node_id: str,
+        rel_types: list[RelationType],
+        max_depth: Optional[int] = None,
+        _visited: Optional[set[str]] = None,
+        _depth: int = 0,
+    ) -> CausalTreeNode:
+        """Build recursive causal tree showing ALL paths to a node."""
+        node = self._node_map.get(node_id)
+        if node is None:
+            return CausalTreeNode(id=node_id, content=f"[unknown:{node_id[:8]}]")
+
+        visited = _visited or set()
+        if node_id in visited:
+            return CausalTreeNode(
+                id=node.id, content=node.content + " [cycle]"
+            )
+
+        tree_node = CausalTreeNode(id=node.id, content=node.content)
+
+        if max_depth is not None and _depth >= max_depth:
+            return tree_node
+
+        new_visited = visited | {node_id}
+
+        for rel in self._rels_to_target.get(node_id, []):
+            if rel.type not in rel_types:
+                continue
+            parent_tree = self._build_causal_tree(
+                rel.source, rel_types, max_depth, new_visited, _depth + 1
+            )
+            parent_tree.relationship_type = rel.type.value
+            tree_node.parents.append(parent_tree)
+
+        return tree_node
 
     def _has_multiple_paths(
         self, node_id: str, rel_types: list[RelationType]

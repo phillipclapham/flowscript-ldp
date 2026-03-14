@@ -16,6 +16,7 @@ keywords = ["llm", "delegate", "protocol", "flowscript", "semantic-graphs", "ai-
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -29,6 +30,15 @@ dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21",
 ]
+
+[project.scripts]
+flowscript-ldp = "flowscript_ldp.cli:main"
+
+[project.urls]
+Repository = "https://github.com/phillipclapham/flowscript-ldp"
+Documentation = "https://github.com/phillipclapham/flowscript-ldp#readme"
+"LDP Paper" = "https://arxiv.org/abs/2603.08852"
+"FlowScript" = "https://github.com/phillipclapham/flowscript"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/flowscript_ldp"]

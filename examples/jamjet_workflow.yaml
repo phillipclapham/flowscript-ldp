@@ -1,56 +1,38 @@
-# JamJet workflow using FlowScript Mode 3 payload
+# JamJet workflow using FlowScript Mode 3 query tools
 #
-# This shows how a JamJet agent workflow could use the flowscript_mode3
-# node type to analyze semantic graphs as part of an orchestrated pipeline.
+# Uses JamJet's @tool integration to call FlowScript query operations
+# as tool nodes in an agent workflow. The flowscript_ldp.adapter module
+# provides tool-compatible functions for all 5 query operations.
 #
-# The FlowScriptMode3Adapter registers as a ProtocolAdapter plugin,
-# enabling Mode 3 payloads alongside MCP and A2A adapters.
+# To register the tools in Python:
+#
+#   from jamjet import tool, Agent
+#   from flowscript_ldp.adapter import flowscript_tensions, flowscript_blocked
+#
+#   tensions_tool = tool(flowscript_tensions)
+#   blocked_tool = tool(flowscript_blocked)
+#
+#   agent = Agent(
+#       "analyst",
+#       model="claude-haiku-4-5-20251001",
+#       tools=[tensions_tool, blocked_tool],
+#       instructions="Analyze the semantic graph for tradeoffs and blockers.",
+#   )
+#   result = await agent.run("Analyze this graph: {ir_json}")
 
-name: analyze_decision
-description: Parse thinking, analyze tradeoffs, synthesize recommendation
-
-nodes:
-  # Step 1: Parse input as FlowScript
-  parse:
-    type: flowscript_mode3
-    input_mode: 0  # Accept text input
-    query: null     # Just parse, don't query yet
-    output_key: ir_payload
-    next: find_tensions
-
-  # Step 2: Extract tensions from the semantic graph
-  find_tensions:
-    type: flowscript_mode3
-    input_mode: 3
-    input_key: ir_payload
-    query: tensions
-    output_key: tradeoffs
-    fallback_mode: 1  # Degrade to semantic frame if Mode 3 fails
-    next: find_blockers
-
-  # Step 3: Find blockers
-  find_blockers:
-    type: flowscript_mode3
-    input_mode: 3
-    input_key: ir_payload
-    query: blocked
-    output_key: blockers
-    next: synthesize
-
-  # Step 4: Synthesize with LLM
-  synthesize:
-    type: model
-    model: claude-haiku-4-5-20251001
-    prompt: |
-      Given the following analysis of a decision:
-
-      Tensions (tradeoffs): {{tradeoffs}}
-      Blockers: {{blockers}}
-
-      Provide a recommendation that addresses the key tradeoffs
-      and suggests how to resolve or work around the blockers.
-    output_key: recommendation
-    next: end
-
-  end:
-    type: end
+# Agent-first YAML definition (JamJet v0.1.x compatible)
+agent:
+  id: flowscript-analyst
+  strategy: react
+  goal: >
+    Analyze the FlowScript semantic graph to identify tradeoffs,
+    blockers, and provide a recommendation that addresses key tensions.
+  model: claude-haiku-4-5-20251001
+  tools:
+    - flowscript_tensions
+    - flowscript_blocked
+    - flowscript_what_if
+  limits:
+    max_iterations: 5
+    max_cost_usd: 0.10
+    timeout_seconds: 60

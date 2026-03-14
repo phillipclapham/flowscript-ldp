@@ -1,42 +1,140 @@
 """
-JamJet ProtocolAdapter hook.
+JamJet Integration.
 
-Provides the interface for JamJet's ProtocolAdapter pattern to integrate
-FlowScript Mode 3 payloads into agent workflows.
+Two integration surfaces:
 
-This is the adapter that would register alongside MCP and A2A adapters
-in a JamJet runtime, enabling FlowScript semantic graph payloads as a
-first-class workflow node type.
+1. **Tool-based (works today):** JamJet @tool-decorated functions that wrap
+   FlowScript query operations. Any JamJet workflow can call these as tool
+   nodes. This is the primary integration path.
+
+2. **Adapter pattern (forward-looking):** Standalone query dispatcher that
+   follows the adapter pattern described in the LDP paper. Designed to plug
+   into a future ProtocolAdapter interface when JamJet adds protocol-level
+   extensibility. Usable standalone today as a query dispatcher.
 """
 
 from __future__ import annotations
 
-from typing import Any, Optional
-
 from dataclasses import asdict
+from typing import Any, Optional
 
 from .fallback import FallbackChain
 from .ir import IR
 from .payload import FlowScriptPayload
 from .query import QueryEngine
 
+# =============================================================================
+# Tool-based integration (works with JamJet v0.1.x today)
+# =============================================================================
+
+# These functions can be registered as JamJet tools via the @tool decorator.
+# Import and use them in your JamJet workflow:
+#
+#   from jamjet import tool
+#   from flowscript_ldp.adapter import (
+#       flowscript_tensions, flowscript_blocked,
+#       flowscript_why, flowscript_what_if, flowscript_alternatives,
+#   )
+#
+# Then reference them in Agent or Workflow tool lists.
+
+
+def flowscript_tensions(ir_json: dict[str, Any]) -> dict[str, Any]:
+    """Analyze tradeoffs in a FlowScript semantic graph.
+
+    Returns all tension relationships grouped by axis, with metadata
+    about total tensions and most common tradeoff dimension.
+    """
+    payload = FlowScriptPayload.from_dict(ir_json)
+    result = payload.query.tensions()
+    return {"tensions": result.metadata}
+
+
+def flowscript_blocked(ir_json: dict[str, Any]) -> dict[str, Any]:
+    """Find blocked items in a FlowScript semantic graph.
+
+    Returns all blocked nodes with impact scores, transitive causes,
+    and days-blocked tracking.
+    """
+    payload = FlowScriptPayload.from_dict(ir_json)
+    result = payload.query.blocked()
+    return {
+        "blockers": [
+            {
+                "content": b.node["content"],
+                "reason": b.blocked_state["reason"],
+                "impact_score": b.impact_score,
+                "days_blocked": b.blocked_state["days_blocked"],
+            }
+            for b in result.blockers
+        ],
+        "metadata": result.metadata,
+    }
+
+
+def flowscript_why(ir_json: dict[str, Any], node_id: str) -> dict[str, Any]:
+    """Trace causal ancestry of a node in a FlowScript semantic graph.
+
+    Returns the root cause and causal chain explaining why a node exists.
+    """
+    payload = FlowScriptPayload.from_dict(ir_json)
+    result = payload.query.why(node_id, format="minimal")
+    return asdict(result)
+
+
+def flowscript_what_if(ir_json: dict[str, Any], node_id: str) -> dict[str, Any]:
+    """Analyze downstream impact of changing a node in a FlowScript graph.
+
+    Returns impact summary with benefits, risks, and key tradeoffs.
+    """
+    payload = FlowScriptPayload.from_dict(ir_json)
+    result = payload.query.what_if(node_id, format="summary")
+    return asdict(result)
+
+
+def flowscript_alternatives(
+    ir_json: dict[str, Any], question_id: str
+) -> dict[str, Any]:
+    """Reconstruct a decision from a FlowScript semantic graph.
+
+    Returns all alternatives considered, which was chosen, and why.
+    """
+    payload = FlowScriptPayload.from_dict(ir_json)
+    result = payload.query.alternatives(question_id, format="simple")
+    return asdict(result)
+
+
+def flowscript_degrade(
+    ir_json: dict[str, Any], target_mode: int = 1
+) -> dict[str, Any] | str:
+    """Degrade a FlowScript Mode 3 payload to Mode 1 or Mode 0.
+
+    Mode 1: Structured semantic frame (JSON).
+    Mode 0: Natural language prose (string).
+    """
+    ir = IR.model_validate(ir_json)
+    fallback = FallbackChain(ir)
+    if target_mode == 0:
+        return fallback.to_mode0()
+    return fallback.to_mode1()
+
+
+# =============================================================================
+# Adapter pattern (standalone dispatcher + future ProtocolAdapter hook)
+# =============================================================================
+
 
 class FlowScriptMode3Adapter:
-    """JamJet ProtocolAdapter for FlowScript Mode 3 payloads.
+    """FlowScript Mode 3 query dispatcher.
 
-    Implements the adapter pattern for JamJet's plugin system. In a full
-    JamJet integration, this would register via the ProtocolAdapter trait
-    for discovery, invocation, streaming, status, and cancellation.
+    Standalone adapter that processes Mode 3 payloads with optional query
+    execution and fallback degradation. Follows the adapter pattern
+    described in the LDP paper (arXiv:2603.08852) for protocol-level
+    integration.
 
-    Usage in JamJet workflow YAML:
-        nodes:
-          analyze:
-            type: flowscript_mode3
-            input_mode: 3
-            query: tensions
-            output_key: tradeoffs
-            fallback_mode: 1
-            next: synthesize
+    Currently usable as a standalone query dispatcher. Designed to be
+    compatible with a future JamJet ProtocolAdapter interface when
+    protocol-level extensibility is added to the runtime.
     """
 
     ADAPTER_NAME = "flowscript-mode3"
@@ -44,7 +142,7 @@ class FlowScriptMode3Adapter:
     SUPPORTED_QUERIES = ["why", "whatIf", "tensions", "blocked", "alternatives"]
 
     def discover(self) -> dict[str, Any]:
-        """Return adapter capabilities for JamJet discovery."""
+        """Return adapter capabilities."""
         return {
             "name": self.ADAPTER_NAME,
             "version": "0.1.0",
@@ -64,16 +162,16 @@ class FlowScriptMode3Adapter:
         query_args: Optional[dict[str, Any]] = None,
         fallback_mode: Optional[int] = None,
     ) -> dict[str, Any]:
-        """Process a Mode 3 payload through the adapter.
+        """Process a Mode 3 payload.
 
         Args:
             payload_data: LDP Mode 3 envelope or raw IR dict
-            query: Optional query to run (why, whatIf, tensions, blocked, alternatives)
+            query: Query to run (why, whatIf, tensions, blocked, alternatives)
             query_args: Arguments for the query (e.g., node_id for why/whatIf)
-            fallback_mode: If set, degrade output to this mode (1 or 0)
+            fallback_mode: Degrade output to this mode (1 or 0)
 
         Returns:
-            Query results or degraded payload
+            Query results, degraded payload, or IR stats
         """
         # Decode payload
         if "ldp_version" in payload_data:
@@ -99,7 +197,7 @@ class FlowScriptMode3Adapter:
                 result["fallback"] = fallback.to_mode0()
                 result["mode"] = 0
 
-        # Always include the original IR reference
+        # Include IR stats if no query or fallback was requested
         if "result" not in result and "fallback" not in result:
             result["ir_stats"] = {
                 "nodes": len(payload.ir.nodes),
@@ -153,7 +251,3 @@ class FlowScriptMode3Adapter:
     def status(self) -> dict[str, str]:
         """Return adapter status."""
         return {"status": "ready", "adapter": self.ADAPTER_NAME}
-
-    def cancel(self) -> None:
-        """Cancel any in-progress operation. No-op for sync adapter."""
-        pass

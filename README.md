@@ -86,21 +86,44 @@ The LDP paper's key finding: noisy provenance *degrades* synthesis quality below
 
 ### JamJet Integration
 
-The `FlowScriptMode3Adapter` implements JamJet's ProtocolAdapter pattern, registering alongside MCP and A2A adapters with zero modifications to the host system:
+FlowScript query operations are available as tool-compatible functions for JamJet workflows:
+
+```python
+from jamjet import tool, Agent
+from flowscript_ldp.adapter import flowscript_tensions, flowscript_blocked
+
+agent = Agent(
+    "analyst",
+    model="claude-haiku-4-5-20251001",
+    tools=[tool(flowscript_tensions), tool(flowscript_blocked)],
+    instructions="Analyze the semantic graph for tradeoffs and blockers.",
+)
+result = await agent.run(f"Analyze this: {ir_json}")
+```
+
+A standalone `FlowScriptMode3Adapter` dispatcher is also available, designed to be compatible with a future ProtocolAdapter interface as JamJet adds protocol-level extensibility:
 
 ```python
 from flowscript_ldp import FlowScriptMode3Adapter
 
 adapter = FlowScriptMode3Adapter()
-
-# Process a Mode 3 payload with a query
-result = adapter.invoke(envelope, query="tensions")
-
-# Or degrade to Mode 1 for receivers that don't support Mode 3
-result = adapter.invoke(envelope, fallback_mode=1)
+result = adapter.invoke(envelope, query="tensions", fallback_mode=1)
 ```
 
 See `examples/jamjet_workflow.yaml` for a complete workflow definition.
+
+## CLI
+
+```bash
+flowscript-ldp info graph.json                          # IR statistics
+flowscript-ldp query tensions graph.json                # Find tradeoffs
+flowscript-ldp query blocked graph.json                 # Find blockers
+flowscript-ldp query why <node_id> graph.json           # Trace causes
+flowscript-ldp query what-if <node_id> graph.json       # Impact analysis
+flowscript-ldp query alternatives <question_id> graph.json  # Decision reconstruction
+flowscript-ldp encode graph.json                        # Wrap in Mode 3 envelope
+flowscript-ldp degrade graph.json --mode 0              # Degrade to natural language
+```
 
 ## Installation
 
@@ -108,7 +131,13 @@ See `examples/jamjet_workflow.yaml` for a complete workflow definition.
 pip install flowscript-ldp
 ```
 
-The core package (IR models, query engine, payload, fallback, adapter) works standalone. The `ParserBridge` optionally requires the [FlowScript CLI](https://github.com/phillipclapham/flowscript) for parsing `.fs` text files.
+Or from source:
+
+```bash
+pip install git+https://github.com/phillipclapham/flowscript-ldp.git
+```
+
+The core package (IR models, query engine, payload, fallback, adapter, CLI) works standalone. The `ParserBridge` optionally requires the [FlowScript CLI](https://github.com/phillipclapham/flowscript) for parsing `.fs` text files.
 
 ## Architecture
 
@@ -116,14 +145,15 @@ The core package (IR models, query engine, payload, fallback, adapter) works sta
 flowscript_ldp/
 ├── ir.py              # Pydantic models matching FlowScript IR JSON schema
 ├── parser_bridge.py   # Subprocess bridge to FlowScript CLI (optional)
-├── query.py           # Python port of 5 query operations (~600 lines)
+├── query.py           # Python port of 5 query operations (3 formats each)
 ├── payload.py         # Mode 3 payload encode/decode/envelope
 ├── fallback.py        # Mode 3 → Mode 1 → Mode 0 conversion
-├── adapter.py         # JamJet ProtocolAdapter hook
-└── round_trip.py      # Round-trip verification utilities
+├── adapter.py         # JamJet tool functions + standalone adapter
+├── round_trip.py      # Round-trip verification utilities
+└── cli.py             # Command-line interface
 ```
 
-**90 tests** covering IR models, all 5 query operations (including edge cases: cycles, diamond graphs, empty graphs, depth limiting), payload encode/decode, fallback chain, adapter dispatch, and round-trip verification.
+**105 tests** covering IR models, all 5 query operations with all format variants (including edge cases: cycles, diamond graphs, empty graphs, depth limiting), payload encode/decode, fallback chain, adapter dispatch, tool functions, repr output, and round-trip verification.
 
 ## References
 

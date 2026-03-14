@@ -17,7 +17,9 @@ from flowscript_ldp.query import (
     AlternativesResultTree,
     BlockedResult,
     CausalAncestry,
+    CausalTree,
     ImpactAnalysis,
+    ImpactList,
     ImpactSummary,
     MinimalWhy,
     QueryEngine,
@@ -54,6 +56,40 @@ class TestWhy:
         assert isinstance(result, MinimalWhy)
         assert result.root_cause == "root cause"
 
+    def test_tree_format(self, simple_ir):
+        engine = QueryEngine(simple_ir)
+        result = engine.why("bbb" + "0" * 61, format="tree")
+        assert isinstance(result, CausalTree)
+        assert result.tree.content == "effect"
+        assert len(result.tree.parents) > 0
+        assert result.tree.parents[0].content == "root cause"
+
+    def test_tree_format_multiple_parents(self):
+        """Tree format shows all causal paths."""
+        id_a = "a" * 64
+        id_b = "b" * 64
+        id_c = "c" * 64
+        ir = IR(
+            version="1.0.0",
+            nodes=[
+                Node(id=id_a, type=NodeType.STATEMENT, content="cause A", provenance=_prov(1)),
+                Node(id=id_b, type=NodeType.STATEMENT, content="cause B", provenance=_prov(2)),
+                Node(id=id_c, type=NodeType.STATEMENT, content="effect", provenance=_prov(3)),
+            ],
+            relationships=[
+                Relationship(id="r1" + "0" * 62, type=RelationType.CAUSES, source=id_a, target=id_c, provenance=_prov(1)),
+                Relationship(id="r2" + "0" * 62, type=RelationType.CAUSES, source=id_b, target=id_c, provenance=_prov(2)),
+            ],
+            states=[],
+            invariants=GraphInvariants(),
+        )
+        engine = QueryEngine(ir)
+        result = engine.why(id_c, format="tree")
+        assert isinstance(result, CausalTree)
+        assert len(result.tree.parents) == 2
+        parent_contents = {p.content for p in result.tree.parents}
+        assert parent_contents == {"cause A", "cause B"}
+
 
 class TestWhatIf:
     def test_impact_tree(self, simple_ir):
@@ -67,6 +103,15 @@ class TestWhatIf:
         result = engine.what_if("aaa" + "0" * 61, format="summary")
         assert isinstance(result, ImpactSummary)
         assert "root cause" in result.impact_summary
+
+    def test_list_format(self, simple_ir):
+        engine = QueryEngine(simple_ir)
+        result = engine.what_if("aaa" + "0" * 61, format="list")
+        assert isinstance(result, ImpactList)
+        assert len(result.consequences) > 0
+        # Should be sorted by depth
+        depths = [c.depth for c in result.consequences]
+        assert depths == sorted(depths)
 
     def test_node_not_found(self, simple_ir):
         engine = QueryEngine(simple_ir)
