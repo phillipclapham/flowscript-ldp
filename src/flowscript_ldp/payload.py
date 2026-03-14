@@ -12,6 +12,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
+from . import __version__
 from .ir import IR
 from .query import QueryEngine
 
@@ -21,7 +22,7 @@ class PayloadProvenance(BaseModel):
 
     created_at: str
     source_system: str = "flowscript-ldp"
-    source_version: str = "0.1.0"
+    source_version: str = __version__
     ir_version: str = "1.0.0"
     node_count: int = 0
     relationship_count: int = 0

@@ -290,7 +290,7 @@ class QueryEngine:
         self._node_map: dict[str, Node] = {}
         self._rels_from_source: dict[str, list[Relationship]] = {}
         self._rels_to_target: dict[str, list[Relationship]] = {}
-        self._state_map: dict[str, State] = {}
+        self._states_by_node: dict[str, list[State]] = {}
 
         if ir is not None:
             self.load(ir)
@@ -307,7 +307,7 @@ class QueryEngine:
         self._node_map.clear()
         self._rels_from_source.clear()
         self._rels_to_target.clear()
-        self._state_map.clear()
+        self._states_by_node.clear()
 
         for node in self._ir.nodes:
             self._node_map[node.id] = node
@@ -317,7 +317,7 @@ class QueryEngine:
             self._rels_to_target.setdefault(rel.target, []).append(rel)
 
         for state in self._ir.states:
-            self._state_map[state.node_id] = state
+            self._states_by_node.setdefault(state.node_id, []).append(state)
 
     # =========================================================================
     # Query 1: why — Causal ancestry (backward traversal)
@@ -832,13 +832,11 @@ class QueryEngine:
         self, node: Node
     ) -> tuple[bool, Optional[str], Optional[str]]:
         """Check if a node has a 'decided' state. Returns (chosen, rationale, on)."""
-        assert self._ir is not None
-        for state in self._ir.states:
+        for state in self._states_by_node.get(node.id, []):
             if state.type.value == "decided":
-                if state.node_id == node.id:
-                    rationale = state.fields.rationale if state.fields else None
-                    on = state.fields.on if state.fields else None
-                    return True, rationale, on
+                rationale = state.fields.rationale if state.fields else None
+                on = state.fields.on if state.fields else None
+                return True, rationale, on
         return False, None, None
 
     def _extract_rejection_reasons(self, alt_node_id: str) -> list[str]:
@@ -869,10 +867,9 @@ class QueryEngine:
         visited = visited | {node_id}
         node = self._node_map[node_id]
 
-        assert self._ir is not None
         is_chosen = any(
-            s.type.value == "decided" and s.node_id == node_id
-            for s in self._ir.states
+            s.type.value == "decided"
+            for s in self._states_by_node.get(node_id, [])
         )
 
         tree_node = TreeAlternative(

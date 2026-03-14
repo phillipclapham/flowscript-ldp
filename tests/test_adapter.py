@@ -1,5 +1,7 @@
 """Tests for JamJet adapter and tool functions."""
 
+import asyncio
+
 import pytest
 
 from flowscript_ldp.adapter import (
@@ -10,6 +12,7 @@ from flowscript_ldp.adapter import (
     flowscript_what_if,
     flowscript_alternatives,
     flowscript_degrade,
+    get_jamjet_tools,
 )
 from flowscript_ldp.payload import FlowScriptPayload
 
@@ -133,7 +136,11 @@ class TestToolFunctions:
     def test_flowscript_tensions(self, decision_ir):
         ir_dict = decision_ir.model_dump(mode="json")
         result = flowscript_tensions(ir_dict)
-        assert result["tensions"]["total_tensions"] == 1
+        assert result["metadata"]["total_tensions"] == 1
+        assert len(result["tensions"]) == 1
+        assert result["tensions"][0]["axis"] == "consistency vs speed"
+        assert result["tensions"][0]["source"] == "strong consistency"
+        assert result["tensions"][0]["target"] == "fast reads"
 
     def test_flowscript_blocked(self, blocker_ir):
         ir_dict = blocker_ir.model_dump(mode="json")
@@ -205,3 +212,49 @@ class TestRepr:
         result = engine.alternatives("q" * 64, format="simple")
         r = repr(result)
         assert "PostgreSQL" in r
+
+
+class TestJamJetTools:
+    """Tests for get_jamjet_tools() JamJet integration."""
+
+    def test_returns_six_tools(self):
+        tools = get_jamjet_tools()
+        assert len(tools) == 6
+
+    def test_all_tools_have_jamjet_metadata(self):
+        tools = get_jamjet_tools()
+        for t in tools:
+            assert hasattr(t, "_jamjet_tool"), f"{t.__name__} missing _jamjet_tool"
+
+    def test_tensions_tool_works_async(self, decision_ir):
+        tools = get_jamjet_tools()
+        ir_dict = decision_ir.model_dump(mode="json")
+        result = asyncio.run(tools[0](ir_dict))
+        assert result["metadata"]["total_tensions"] == 1
+        assert len(result["tensions"]) == 1
+
+    def test_blocked_tool_works_async(self, blocker_ir):
+        tools = get_jamjet_tools()
+        ir_dict = blocker_ir.model_dump(mode="json")
+        result = asyncio.run(tools[1](ir_dict))
+        assert len(result["blockers"]) == 1
+
+    def test_why_tool_works_async(self, simple_ir):
+        tools = get_jamjet_tools()
+        ir_dict = simple_ir.model_dump(mode="json")
+        node_id = simple_ir.nodes[1].id
+        result = asyncio.run(tools[2](ir_dict, node_id))
+        assert result["root_cause"] == "root cause"
+
+    def test_tools_from_agent_creation(self):
+        """Verify tools can be passed to JamJet Agent constructor."""
+        from jamjet import Agent
+
+        tools = get_jamjet_tools()
+        agent = Agent(
+            "test",
+            model="claude-haiku-4-5-20251001",
+            tools=tools,
+            instructions="Test.",
+        )
+        assert agent.name == "test"

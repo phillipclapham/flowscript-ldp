@@ -18,36 +18,43 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Optional
 
+from . import __version__
 from .fallback import FallbackChain
 from .ir import IR
 from .payload import FlowScriptPayload
 from .query import QueryEngine
 
 # =============================================================================
-# Tool-based integration (works with JamJet v0.1.x today)
+# Tool functions (sync — usable standalone or via get_jamjet_tools())
 # =============================================================================
 
-# These functions can be registered as JamJet tools via the @tool decorator.
-# Import and use them in your JamJet workflow:
+# These functions contain the query logic. They're sync for direct use.
+# For JamJet integration, use get_jamjet_tools() which wraps them as
+# async @tool-decorated functions that JamJet's Agent requires.
 #
-#   from jamjet import tool
-#   from flowscript_ldp.adapter import (
-#       flowscript_tensions, flowscript_blocked,
-#       flowscript_why, flowscript_what_if, flowscript_alternatives,
-#   )
-#
-# Then reference them in Agent or Workflow tool lists.
+#   from flowscript_ldp.adapter import get_jamjet_tools
+#   tools = get_jamjet_tools()
+#   agent = Agent("analyst", model="...", tools=tools, instructions="...")
 
 
 def flowscript_tensions(ir_json: dict[str, Any]) -> dict[str, Any]:
     """Analyze tradeoffs in a FlowScript semantic graph.
 
-    Returns all tension relationships grouped by axis, with metadata
-    about total tensions and most common tradeoff dimension.
+    Returns all tension relationships grouped by axis, with the source
+    and target content of each tension pair, plus summary metadata.
     """
     payload = FlowScriptPayload.from_dict(ir_json)
     result = payload.query.tensions()
-    return {"tensions": result.metadata}
+    tensions_detail: list[dict[str, str]] = []
+    if result.tensions_by_axis:
+        for axis, details in result.tensions_by_axis.items():
+            for d in details:
+                tensions_detail.append({
+                    "axis": axis,
+                    "source": d.source["content"],
+                    "target": d.target["content"],
+                })
+    return {"tensions": tensions_detail, "metadata": result.metadata}
 
 
 def flowscript_blocked(ir_json: dict[str, Any]) -> dict[str, Any]:
@@ -120,6 +127,78 @@ def flowscript_degrade(
 
 
 # =============================================================================
+# JamJet tool registration (async wrappers for JamJet @tool decorator)
+# =============================================================================
+
+
+def get_jamjet_tools() -> list:
+    """Return all FlowScript query operations as JamJet @tool-decorated functions.
+
+    JamJet requires async tool functions decorated with @jamjet.tool.
+    This function lazily imports jamjet and returns ready-to-use tools.
+
+    Usage::
+
+        from jamjet import Agent
+        from flowscript_ldp.adapter import get_jamjet_tools
+
+        agent = Agent(
+            "analyst",
+            model="claude-haiku-4-5-20251001",
+            tools=get_jamjet_tools(),
+            instructions="Analyze the semantic graph.",
+        )
+        result = await agent.run(f"Analyze: {ir_json}")
+    """
+    try:
+        from jamjet import tool
+    except ImportError:
+        raise ImportError(
+            "JamJet is required for tool integration. "
+            "Install it with: pip install jamjet"
+        )
+
+    @tool
+    async def flowscript_tensions_tool(ir_json: dict[str, Any]) -> dict[str, Any]:
+        """Analyze tradeoffs in a FlowScript semantic graph."""
+        return flowscript_tensions(ir_json)
+
+    @tool
+    async def flowscript_blocked_tool(ir_json: dict[str, Any]) -> dict[str, Any]:
+        """Find blocked items in a FlowScript semantic graph."""
+        return flowscript_blocked(ir_json)
+
+    @tool
+    async def flowscript_why_tool(ir_json: dict[str, Any], node_id: str) -> dict[str, Any]:
+        """Trace causal ancestry of a node in a FlowScript semantic graph."""
+        return flowscript_why(ir_json, node_id)
+
+    @tool
+    async def flowscript_what_if_tool(ir_json: dict[str, Any], node_id: str) -> dict[str, Any]:
+        """Analyze downstream impact of changing a node in a FlowScript graph."""
+        return flowscript_what_if(ir_json, node_id)
+
+    @tool
+    async def flowscript_alternatives_tool(ir_json: dict[str, Any], question_id: str) -> dict[str, Any]:
+        """Reconstruct a decision from a FlowScript semantic graph."""
+        return flowscript_alternatives(ir_json, question_id)
+
+    @tool
+    async def flowscript_degrade_tool(ir_json: dict[str, Any], target_mode: int = 1) -> dict[str, Any] | str:
+        """Degrade a FlowScript Mode 3 payload to Mode 1 or Mode 0."""
+        return flowscript_degrade(ir_json, target_mode)
+
+    return [
+        flowscript_tensions_tool,
+        flowscript_blocked_tool,
+        flowscript_why_tool,
+        flowscript_what_if_tool,
+        flowscript_alternatives_tool,
+        flowscript_degrade_tool,
+    ]
+
+
+# =============================================================================
 # Adapter pattern (standalone dispatcher + future ProtocolAdapter hook)
 # =============================================================================
 
@@ -145,7 +224,7 @@ class FlowScriptMode3Adapter:
         """Return adapter capabilities."""
         return {
             "name": self.ADAPTER_NAME,
-            "version": "0.1.0",
+            "version": __version__,
             "protocol": "ldp",
             "supported_modes": self.SUPPORTED_MODES,
             "preferred_mode": 3,
@@ -213,7 +292,16 @@ class FlowScriptMode3Adapter:
         """Dispatch a query to the engine."""
         if query == "tensions":
             r = engine.tensions(**args)
-            return {"metadata": r.metadata}
+            tensions_detail: list[dict[str, str]] = []
+            if r.tensions_by_axis:
+                for axis, details in r.tensions_by_axis.items():
+                    for d in details:
+                        tensions_detail.append({
+                            "axis": axis,
+                            "source": d.source["content"],
+                            "target": d.target["content"],
+                        })
+            return {"tensions": tensions_detail, "metadata": r.metadata}
         elif query == "blocked":
             r = engine.blocked(**args)
             return {

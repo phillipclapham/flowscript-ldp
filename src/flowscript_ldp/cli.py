@@ -24,6 +24,7 @@ import json
 import sys
 from pathlib import Path
 
+from . import __version__
 from .fallback import FallbackChain
 from .ir import IR
 from .payload import FlowScriptPayload
@@ -156,7 +157,7 @@ def main() -> None:
         prog="flowscript-ldp",
         description="Query FlowScript IR graphs via LDP Mode 3",
     )
-    parser.add_argument("--version", action="version", version="flowscript-ldp 0.1.0")
+    parser.add_argument("--version", action="version", version=f"flowscript-ldp {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # query

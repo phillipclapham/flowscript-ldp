@@ -8,6 +8,7 @@ typed IR models. Supports both FlowScript text input and pre-compiled IR JSON.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -16,8 +17,12 @@ from typing import Optional
 from .ir import IR
 
 
-# Default FlowScript CLI location
-DEFAULT_CLI_PATH = Path.home() / "Documents" / "flowscript" / "bin" / "flowscript"
+def _find_flowscript_cli() -> Optional[Path]:
+    """Search for the FlowScript CLI on PATH."""
+    which = shutil.which("flowscript")
+    if which is not None:
+        return Path(which)
+    return None
 
 
 class ParserError(Exception):
@@ -33,7 +38,17 @@ class ParserBridge:
     """Bridge to FlowScript CLI for parsing .fs text into IR."""
 
     def __init__(self, cli_path: Optional[Path] = None):
-        self.cli_path = cli_path or DEFAULT_CLI_PATH
+        if cli_path is not None:
+            self.cli_path = cli_path
+        else:
+            found = _find_flowscript_cli()
+            if found is None:
+                raise FileNotFoundError(
+                    "FlowScript CLI not found on PATH. "
+                    "Install FlowScript (https://github.com/phillipclapham/flowscript) "
+                    "or pass cli_path explicitly."
+                )
+            self.cli_path = found
         if not self.cli_path.exists():
             raise FileNotFoundError(
                 f"FlowScript CLI not found at {self.cli_path}. "
