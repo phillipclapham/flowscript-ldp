@@ -59,53 +59,131 @@
 
 ---
 
-## Post-Publish Roadmap: Reference → Production
+## v0.2.0 Roadmap: Real Integration (Sunil collaboration active)
 
-**Strategic framing:** v0.1.0 is a correct, tested reference implementation. It proves Mode 3 works. Production-grade means participating in the full LDP session lifecycle, which requires protocol decisions that should be informed by Sunil's and JamJet's feedback.
+**Landscape changed Mar 14:** Sunil replied with three infrastructure gifts:
+1. **JamJet v0.2.0** — `ProtocolAdapter` ABC shipped (`discover()`, `invoke()`, `stream()`, `status()`, `cancel()`) + `ProtocolRegistry` with URL-prefix dispatch. `pip install jamjet==0.2.0`
+2. **ldp-protocol** — Standalone Python LDP SDK (`LdpDelegate`, `LdpClient`, `LdpRouter`). `pip install ldp-protocol`
+3. **Co-design invitation** — Session state machine designed together via GitHub issues, not built against spec alone.
 
-### What we have vs what's missing
+### What we have vs what's changed
 
-| Layer | v0.1.0 Status | Gap to Production |
-|-------|--------------|-------------------|
-| **Data** (IR models, validation) | ✓ Complete | None |
-| **Query** (5 ops, 3 formats each) | ✓ Complete | None |
+| Layer | v0.1.0 Status | v0.2.0 Path |
+|-------|--------------|-------------|
+| **Data** (IR models, validation) | ✓ Complete | No change |
+| **Query** (5 ops, 3 formats each) | ✓ Complete | No change |
 | **Payload** (Mode 3 envelope, encode/decode) | ✓ Complete | Minor: envelope versioning strategy |
-| **Fallback** (Mode 3→1→0 chain) | ✓ Complete | Mode 0→3 upgrade (requires parser, intentionally lossy) |
-| **Session** (LDP lifecycle) | Partial: `negotiate_capabilities()` returns manifest | No session state machine, no session ID tracking, no mid-session fallback triggers |
-| **Transport** (wire protocol) | None | No HTTP/WebSocket/gRPC, no message framing, no auth |
-| **Runtime** (JamJet integration) | `get_jamjet_tools()` works | No ProtocolAdapter trait (JamJet hasn't built it), no streaming, no cancellation |
-| **Observability** | None | No metrics, tracing, error taxonomy |
-| **Resilience** | Basic validation errors | No retry, circuit breaker, partial failure handling |
+| **Fallback** (Mode 3→1→0 chain) | ✓ Complete | No change |
+| **Runtime** (JamJet integration) | `get_jamjet_tools()` workaround | **UNBLOCKED:** Real `ProtocolAdapter` subclass via JamJet v0.2.0 |
+| **Transport** (wire protocol) | None | **NEW:** `ldp-protocol` SDK as foundation layer (LdpDelegate, LdpClient, LdpRouter) |
+| **Session** (LDP lifecycle) | Partial: capability manifest only | **CO-DESIGN:** GitHub issues with Sunil. Mode renegotiation subtleties. |
+| **Observability** | None | Deferred (post-session layer) |
+| **Resilience** | Basic validation errors | Deferred (post-session layer) |
 
-### Production roadmap (flexible — depends on external feedback)
+### v0.2.0 build plan (in order)
 
-**Phase 1: Session State Machine** (~1-2 days)
-- Implement HELLO → CAPABILITY_MANIFEST → SESSION_PROPOSE → SESSION_ACCEPT → TASK flow as Python class
-- Implementable from paper spec alone
-- Makes the adapter a genuine protocol participant, not just a payload handler
-- Mid-session fallback: Mode 3 validation failure → automatic degrade to Mode 1 → retry
+**Step 1: Integrate JamJet v0.2.0 ProtocolAdapter** (~half day)
+- Replace forward-looking `FlowScriptMode3Adapter` with real `ProtocolAdapter` subclass
+- Implement all ABC methods: `discover()`, `invoke()`, `stream()`, `status()`, `cancel()`
+- Register with `ProtocolRegistry` for URL-prefix dispatch
+- Keep `get_jamjet_tools()` as alternative entry point (tools still useful standalone)
 
-**Phase 2: Two-Agent Integration Test** (~1 day)
-- Two JamJet agents: one sending Mode 3, one receiving
-- Proves bidirectional protocol function, not just unit test correctness
-- Requires JamJet agent-to-agent communication (may need JamJet team input)
+**Step 2: Layer on ldp-protocol SDK** (~half day)
+- `pip install ldp-protocol` — evaluate how LdpDelegate/LdpClient/LdpRouter fit
+- Layer flowscript-ldp encode/decode/query on top of LDP transport primitives
+- Replace any hand-rolled transport with Sunil's SDK
 
-**Phase 3: Transport Layer** (scope TBD — depends on JamJet/LDP ecosystem direction)
-- Wire protocol for Mode 3 payloads
-- Authentication and session management
-- Likely shaped by ProtocolAdapter when JamJet ships it
+**Step 3: Co-design Session State Machine** (async, GitHub issues)
+- Open first issue on Sunil's repo: present what we have (capability manifest, stubbed lifecycle)
+- Ask specifically about mode renegotiation mid-session
+- Seed idea: query ops as coordination primitives for Mode 3 spec
+- Build implementation AFTER design converges
 
-**Phase 4: Production Hardening** (scope TBD)
-- Observability (OpenTelemetry traces, metrics)
-- Resilience patterns (retry, circuit breaker)
-- Performance optimization for large graphs
-- Error taxonomy and structured error responses
+**Step 4: Two-Agent Integration Test** (~1 day, after session layer)
+- Two JamJet agents with real ProtocolAdapter: sender + receiver
+- Bidirectional Mode 3 payloads through actual protocol stack
+- Validates the full chain: negotiate → establish → send Mode 3 → query on receive
 
-### Why not build all of this now?
-- **Session state machine**: Implementable from paper, but Sunil may have opinions on how it should work. Better to ship what's correct, get feedback, then build.
-- **Transport**: No wire format spec exists. Building one in isolation risks building the wrong thing.
-- **ProtocolAdapter**: JamJet hasn't built the trait. Our adapter class is forward-looking, but the actual interface will come from them.
-- **Strategic value of being FIRST and CORRECT > being production-grade before anyone else has started.** v0.1.0 proves the concept. v0.2.0 builds on real-world feedback.
+**Step 5: Production Hardening** (scope TBD after above)
+- Observability, resilience, performance
+- Scoped by what Steps 1-4 reveal
+
+### GitHub Issues Prep (ready to open when Sunil confirms)
+
+**Issue 1: Session State Machine Co-Design**
+```
+Title: Mode 3 session lifecycle — co-design proposal
+Body:
+- What flowscript-ldp has today: negotiate_capabilities() returns Mode 3 manifest
+- What's stubbed: HELLO → CAPABILITY_MANIFEST → SESSION_PROPOSE → SESSION_ACCEPT
+- Specific question: mode renegotiation mid-session — when Mode 3 validation fails,
+  what triggers fallback vs error? Is fallback per-message or per-session?
+- Our implementation experience: fallback chain works message-level (encode → validate →
+  degrade if invalid → retry at lower mode). Should session-level fallback be different?
+```
+
+**Issue 2: Query Operations as Mode 3 Coordination Primitives**
+```
+Title: Formalizing query operations in Mode 3 spec
+Body:
+- Current: 5 ops (why, whatIf, tensions, blocked, alternatives) as introspection
+- Proposal: these are coordination primitives — receiver runs tensions() on incoming
+  payload to pre-compute disagreement before doing work
+- This is "pre-computation of disagreement" — unique to semantic graph payloads
+- Question: should Mode 3 spec define expected query operations, or leave to implementors?
+```
+
+---
+
+## Known Debt Register (MUST evaluate at every phase — close or justify keeping)
+
+Items deferred from v0.2.0 code review (3 reviewers: complement, gemini, session-code-review).
+**Rule: every item here gets evaluated at every build session. Close it, schedule it, or justify deferral. Nothing rots silently.**
+
+### OPEN — Evaluate at Step 3 (Session State Machine)
+
+**D1: `_extract_ir` validation inconsistency**
+- Source: Complement (warning, high confidence)
+- Issue: Raw IR dicts pass through `_extract_ir` without Pydantic validation, while envelopes get validated via `FlowScriptPayload.decode()`. Malformed raw dicts produce unclear errors deep in the query engine.
+- Fix: Add `IR.model_validate()` in raw IR path for consistent validation depth.
+- Why deferred: Query engine catches structural issues; errors are just less clear. Adds overhead for the common (valid IR) case.
+- Close condition: When we build the session layer, we'll define the canonical input path. If all inputs come through LDP envelopes (validated), this becomes moot. If raw IR remains a supported path, fix it then.
+
+**D2: Recursion depth vulnerability in QueryEngine traversals**
+- Source: Gemini (concern)
+- Issue: `why()`, `what_if()`, `blocked()` use recursive DFS. Maliciously deep graphs (1001+ nodes in a chain) crash with `RecursionError`.
+- Fix: Convert to iterative traversal with explicit stack, or add configurable depth limit (50-100 is more than enough for real semantic graphs).
+- Why deferred: Existing v0.1.0 code, not introduced in v0.2.0. No user-facing exposure yet (all inputs are locally constructed).
+- Close condition: Before any deployment where untrusted IR is accepted as input. When session layer exposes the delegate to external callers, this must be fixed.
+
+### OPEN — Evaluate at Step 4 (Two-Agent Test)
+
+**D3: No integration test through `handle_message()` for full LDP flow**
+- Source: Code review agent (note)
+- Issue: Tests call `handle_task()` directly. The actual LDP flow goes `handle_message()` → `_handle_task_submit()` → `handle_task()`. A round-trip test through `handle_message()` would catch routing issues.
+- Fix: Add test that sends `TASK_SUBMIT` envelope through `handle_message()` and verifies the full `TASK_RESULT` envelope.
+- Why deferred: `handle_task()` + `_handle_session_propose()` tested independently; base class routing is ldp-protocol's responsibility.
+- Close condition: Two-agent integration test (Step 4) exercises this path end-to-end. Add explicit unit test if the integration test reveals issues.
+
+### OPEN — Evaluate at Step 5 (Production Hardening)
+
+**D4: Dependency version upper bounds**
+- Source: Complement (warning, high confidence)
+- Issue: `jamjet>=0.2.0` and `ldp-protocol>=0.1.0` have no upper bounds. Both are 0.x packages from a single author. Breaking changes could arrive without warning.
+- Fix: Pin `jamjet>=0.2.0,<0.3.0` and `ldp-protocol>=0.1.0,<0.2.0`.
+- Why deferred: Sunil is actively collaborating. Pinning now could cause friction during co-design. He's unlikely to ship breaking changes without telling us.
+- Close condition: Pin when either (a) collaboration stabilizes and APIs are locked, or (b) we publish to a wider audience who might blindly upgrade. Whichever comes first.
+
+### CLOSED (v0.2.0)
+
+- ~~`_run_query` duplicated formatting logic, diverged from tool functions~~ → FIXED: refactored to delegate to tool functions. Single formatting path.
+- ~~`_handle_session_propose` crashes on unknown PayloadMode values~~ → FIXED: try/except skips unknown modes.
+- ~~Unused imports in delegate.py~~ → FIXED: removed `NegotiatedPayload`, `Provenance`.
+- ~~`_require_arg` falsy check~~ → FIXED: changed to `is None`.
+- ~~Unbounded result cache in adapter~~ → FIXED: bounded to 1000, FIFO eviction.
+- ~~`__all__` lists undefined names~~ → FIXED: dynamic append inside try/except.
+- ~~Registry test pollution~~ → FIXED: autouse cleanup fixture.
+- ~~`stream()` docstring misleading~~ → FIXED: clarified raises on iteration.
 
 ---
 
@@ -141,4 +219,4 @@ source .venv/bin/activate  # Python 3.14, use `pip install ".[dev]"` (not editab
 5. `tests/` — coverage picture
 
 *Created: Mar 14, 2026*
-*Updated: Mar 14, 2026 — post fresh-eyes review + JamJet integration test*
+*Updated: Mar 14, 2026 — v0.2.0 built (JamJet v0.2.0 + ldp-protocol integration), 3-reviewer code review complete, all findings addressed or tracked in Debt Register*

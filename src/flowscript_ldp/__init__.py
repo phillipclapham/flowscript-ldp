@@ -5,7 +5,7 @@ First implementation of Mode 3 from the LLM Delegate Protocol (arXiv:2603.08852)
 Uses FlowScript IR as the payload format for structured relationship representations.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .ir import (
     IR,
@@ -27,6 +27,7 @@ from .query import QueryEngine
 from .payload import FlowScriptPayload
 from .fallback import FallbackChain
 from .adapter import FlowScriptMode3Adapter, get_jamjet_tools
+
 __all__ = [
     "IR",
     "Node",
@@ -49,3 +50,16 @@ __all__ = [
     "FlowScriptMode3Adapter",
     "get_jamjet_tools",
 ]
+
+# Optional integrations — only available when deps are installed
+try:
+    from .delegate import FlowScriptMode3Delegate
+    __all__.append("FlowScriptMode3Delegate")
+except ImportError:
+    pass
+
+try:
+    from .adapter import FlowScriptLdpAdapter
+    __all__.append("FlowScriptLdpAdapter")
+except ImportError:
+    pass

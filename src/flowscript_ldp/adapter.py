@@ -262,7 +262,8 @@ class FlowScriptMode3Adapter:
 
         # Run query if specified
         if query:
-            query_result = self._run_query(payload.query, query, query_args or {})
+            ir_json = payload.ir.model_dump(mode="json")
+            query_result = self._run_query(ir_json, query, query_args or {})
             result["query"] = query
             result["result"] = query_result
 
@@ -287,55 +288,199 @@ class FlowScriptMode3Adapter:
         return result
 
     def _run_query(
-        self, engine: QueryEngine, query: str, args: dict[str, Any]
+        self, ir_json: dict[str, Any], query: str, args: dict[str, Any]
     ) -> Any:
-        """Dispatch a query to the engine."""
+        """Dispatch a query to the engine.
+
+        Delegates to the standalone tool functions to ensure a single
+        formatting path for all query results.
+        """
         if query == "tensions":
-            r = engine.tensions(**args)
-            tensions_detail: list[dict[str, str]] = []
-            if r.tensions_by_axis:
-                for axis, details in r.tensions_by_axis.items():
-                    for d in details:
-                        tensions_detail.append({
-                            "axis": axis,
-                            "source": d.source["content"],
-                            "target": d.target["content"],
-                        })
-            return {"tensions": tensions_detail, "metadata": r.metadata}
+            return flowscript_tensions(ir_json)
         elif query == "blocked":
-            r = engine.blocked(**args)
-            return {
-                "blockers": [
-                    {
-                        "content": b.node["content"],
-                        "reason": b.blocked_state["reason"],
-                        "impact_score": b.impact_score,
-                    }
-                    for b in r.blockers
-                ],
-                "metadata": r.metadata,
-            }
+            return flowscript_blocked(ir_json)
         elif query == "why":
             node_id = args.get("node_id")
             if not node_id:
                 raise ValueError("why query requires node_id argument")
-            r = engine.why(node_id, format="minimal")
-            return asdict(r)
+            return flowscript_why(ir_json, node_id)
         elif query in ("whatIf", "what_if"):
             node_id = args.get("node_id")
             if not node_id:
                 raise ValueError("whatIf query requires node_id argument")
-            r = engine.what_if(node_id, format="summary")
-            return asdict(r)
+            return flowscript_what_if(ir_json, node_id)
         elif query == "alternatives":
             question_id = args.get("question_id")
             if not question_id:
                 raise ValueError("alternatives query requires question_id argument")
-            r = engine.alternatives(question_id, format="simple")
-            return asdict(r)
+            return flowscript_alternatives(ir_json, question_id)
         else:
             raise ValueError(f"Unknown query: {query}")
 
     def status(self) -> dict[str, str]:
         """Return adapter status."""
         return {"status": "ready", "adapter": self.ADAPTER_NAME}
+
+
+# =============================================================================
+# JamJet ProtocolAdapter for LDP (requires jamjet>=0.2.0 + ldp-protocol)
+# =============================================================================
+
+# Conditional base class: inherit from ProtocolAdapter when jamjet is installed,
+# fall back to object when it isn't. This keeps the module importable without
+# jamjet while providing proper subclass behavior when available.
+try:
+    from jamjet.protocols.adapter import ProtocolAdapter as _LdpAdapterBase
+except ImportError:
+    _LdpAdapterBase = object  # type: ignore[misc,assignment]
+
+
+class FlowScriptLdpAdapter(_LdpAdapterBase):
+    """JamJet ProtocolAdapter that bridges to LDP delegates via LdpClient.
+
+    Enables JamJet workflows to discover and invoke LDP delegates
+    (including FlowScriptMode3Delegate) through the protocol registry.
+
+    Requires: ``pip install flowscript-ldp[all]``
+
+    Usage::
+
+        from flowscript_ldp.adapter import FlowScriptLdpAdapter
+
+        # Register with JamJet's protocol registry
+        FlowScriptLdpAdapter.register()
+
+        # Or use directly
+        adapter = FlowScriptLdpAdapter()
+        caps = await adapter.discover("http://localhost:8090")
+        handle = await adapter.invoke("http://localhost:8090", task)
+        result = await adapter.status("http://localhost:8090", handle.task_id)
+    """
+
+    ADAPTER_NAME = "ldp"
+    URL_PREFIXES = ["ldp://", "ldp+flowscript://"]
+
+    def __init__(self) -> None:
+        try:
+            from jamjet.protocols.adapter import ProtocolAdapter  # noqa: F401
+            from ldp_protocol import LdpClient  # noqa: F401
+        except ImportError as e:
+            raise ImportError(
+                "Both jamjet>=0.2.0 and ldp-protocol are required for "
+                "FlowScriptLdpAdapter. Install with: pip install flowscript-ldp[all]"
+            ) from e
+
+        self._client = LdpClient()
+        # LDP tasks complete synchronously in invoke(), but JamJet's
+        # ProtocolAdapter splits invoke/status. We cache results here.
+        # Bounded to prevent memory leaks in long-running processes.
+        self._results: dict[str, dict] = {}
+        self._max_cached = 1000
+
+    async def discover(self, url: str):
+        """Discover remote delegate capabilities via LDP identity endpoint.
+
+        Maps LDP ``LdpIdentityCard`` to JamJet ``RemoteCapabilities``.
+        """
+        from jamjet.protocols.adapter import RemoteCapabilities, RemoteSkill
+
+        identity = await self._client.discover(url)
+        return RemoteCapabilities(
+            name=identity.name,
+            description=identity.description or "",
+            skills=[
+                RemoteSkill(
+                    name=cap.name,
+                    description=cap.description,
+                    input_schema=cap.input_schema,
+                    output_schema=cap.output_schema,
+                )
+                for cap in identity.capabilities
+            ],
+            protocols=["ldp"],
+        )
+
+    async def invoke(self, url: str, task):
+        """Submit a task to an LDP delegate and cache the result.
+
+        LDP tasks are synchronous (request-response), so the result is
+        available immediately. We cache it for retrieval via ``status()``.
+
+        Args:
+            url: Delegate endpoint URL.
+            task: JamJet ``TaskRequest`` with skill, input, etc.
+
+        Returns:
+            JamJet ``TaskHandle`` with task_id and remote_url.
+        """
+        from jamjet.protocols.adapter import TaskHandle
+
+        result = await self._client.submit_task(
+            url,
+            skill=task.skill,
+            input_data=task.input if isinstance(task.input, dict) else {"text": task.input},
+        )
+
+        task_id = result.get("task_id", "")
+
+        # Evict oldest entry if cache is full
+        if len(self._results) >= self._max_cached:
+            oldest = next(iter(self._results))
+            del self._results[oldest]
+
+        self._results[task_id] = result
+
+        return TaskHandle(task_id=task_id, remote_url=url)
+
+    async def stream(self, url: str, task):
+        """Stream task events (not yet supported by LDP).
+
+        LDP is currently request-response only. Calling this method
+        returns an async iterator that raises ``NotImplementedError``
+        on the first iteration.
+        """
+        raise NotImplementedError(
+            "LDP streaming is not yet available. Use invoke() for "
+            "request-response task submission."
+        )
+        # AsyncIterator yield to satisfy type checker
+        yield  # pragma: no cover
+
+    async def status(self, url: str, task_id: str):
+        """Check task status. Returns cached result from invoke().
+
+        LDP tasks complete synchronously during invoke(), so status
+        always returns the cached result.
+        """
+        from jamjet.protocols.adapter import TaskStatus
+
+        result = self._results.get(task_id)
+        if result is not None:
+            return TaskStatus.completed(output=result.get("output"))
+        return TaskStatus.submitted()
+
+    async def cancel(self, url: str, task_id: str) -> None:
+        """Cancel a task (no-op for LDP synchronous tasks)."""
+        self._results.pop(task_id, None)
+
+    @classmethod
+    def register(cls):
+        """Register this adapter with JamJet's default ProtocolRegistry.
+
+        After calling this, JamJet can route to LDP delegates via
+        ``ldp://`` or ``ldp+flowscript://`` URL prefixes.
+
+        Usage::
+
+            FlowScriptLdpAdapter.register()
+            # Now JamJet workflows can use ldp:// URLs
+        """
+        from jamjet.protocols.registry import get_registry
+
+        registry = get_registry()
+        adapter = cls()
+        registry.register(
+            cls.ADAPTER_NAME,
+            adapter,
+            url_prefixes=cls.URL_PREFIXES,
+        )

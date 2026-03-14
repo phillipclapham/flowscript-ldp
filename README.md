@@ -1,6 +1,6 @@
 # flowscript-ldp
 
-[![Tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-168%20passing-brightgreen)]()
 [![Python](https://img.shields.io/badge/python-≥3.10-blue)]()
 [![License](https://img.shields.io/badge/license-MIT-green)]()
 [![PyPI](https://img.shields.io/pypi/v/flowscript-ldp)]()
@@ -110,9 +110,52 @@ mode0 = fallback.to_mode0()
 
 The LDP paper's key finding: noisy provenance *degrades* synthesis quality below the no-provenance baseline. FlowScript IR's temporal graduation model — observations must survive quality gates to persist — acts as a provenance noise filter. Mode 3 payloads carrying pre-filtered relational structure sidestep the degradation the paper identifies.
 
-## JamJet Integration
+## JamJet + LDP Integration
 
-FlowScript query operations are available as JamJet-compatible tools:
+As of v0.2.0, flowscript-ldp integrates with both [JamJet](https://github.com/jamjet-labs/jamjet) v0.2.0's `ProtocolAdapter` interface and the standalone [ldp-protocol](https://pypi.org/project/ldp-protocol/) SDK.
+
+### LDP Delegate (server-side)
+
+Run a Mode 3 delegate as an HTTP service that any LDP client can discover, negotiate with, and submit tasks to:
+
+```python
+from flowscript_ldp.delegate import FlowScriptMode3Delegate
+
+delegate = FlowScriptMode3Delegate()
+delegate.run(port=8090)  # HTTP server with /ldp/identity, /ldp/capabilities, /ldp/messages
+```
+
+The delegate advertises 6 skills (`flowscript.tensions`, `flowscript.blocked`, `flowscript.why`, `flowscript.what_if`, `flowscript.alternatives`, `flowscript.degrade`) and negotiates Mode 3 (Semantic Graph) payloads during session establishment.
+
+```python
+from ldp_protocol import LdpClient
+
+async with LdpClient() as client:
+    # Discover delegate capabilities
+    identity = await client.discover("http://localhost:8090")
+
+    # Submit a query task
+    result = await client.submit_task(
+        "http://localhost:8090",
+        skill="flowscript.tensions",
+        input_data={"ir": ir_json},
+    )
+    # → {"output": {"tensions": [...], "metadata": {...}}, "provenance": {...}}
+```
+
+### JamJet ProtocolAdapter (client-side)
+
+Register flowscript-ldp with JamJet's protocol registry so workflows can route to LDP delegates via `ldp://` URLs:
+
+```python
+from flowscript_ldp.adapter import FlowScriptLdpAdapter
+
+FlowScriptLdpAdapter.register()  # registers for ldp:// and ldp+flowscript:// URL prefixes
+```
+
+### JamJet @tool integration
+
+FlowScript query operations are also available as JamJet-compatible `@tool` functions for use in agent workflows:
 
 ```python
 from jamjet import Agent
@@ -127,26 +170,22 @@ agent = Agent(
 result = await agent.run(f"Analyze this: {ir_json}")
 ```
 
-The sync query functions are also available for standalone use without JamJet:
+### Standalone use
+
+The sync query functions and adapter work without JamJet or ldp-protocol:
 
 ```python
-from flowscript_ldp.adapter import flowscript_tensions
+from flowscript_ldp.adapter import flowscript_tensions, FlowScriptMode3Adapter
+
+# Direct function call
 result = flowscript_tensions(ir_data)
-# → {"tensions": [{"axis": "cost vs control", "source": "...", "target": "..."}], "metadata": {...}}
-```
 
-A standalone `FlowScriptMode3Adapter` dispatcher is also available, designed to be compatible with a future ProtocolAdapter interface as JamJet adds protocol-level extensibility:
-
-```python
-from flowscript_ldp import FlowScriptMode3Adapter
-
+# Adapter with query dispatch
 adapter = FlowScriptMode3Adapter()
 result = adapter.invoke(envelope, query="tensions", fallback_mode=1)
 ```
 
-> **Note:** JamJet v0.1.2 does not yet include a ProtocolAdapter trait. The `@tool` integration via `get_jamjet_tools()` works today. The adapter class is forward-looking — designed for when JamJet adds protocol-level extensibility.
-
-See `examples/jamjet_workflow.yaml` for a complete workflow definition and `examples/standalone_demo.py` for a runnable demo of all 5 queries.
+See `examples/standalone_demo.py` for a runnable demo of all 5 queries.
 
 ## CLI
 
@@ -164,7 +203,10 @@ flowscript-ldp degrade graph.json --mode 0                  # Degrade to natural
 ## Installation
 
 ```bash
-pip install flowscript-ldp
+pip install flowscript-ldp              # core (IR, queries, payload, fallback, CLI)
+pip install flowscript-ldp[ldp]         # + LDP delegate (ldp-protocol SDK)
+pip install flowscript-ldp[jamjet]      # + JamJet ProtocolAdapter
+pip install flowscript-ldp[all]         # everything
 ```
 
 From source:
@@ -173,9 +215,7 @@ From source:
 pip install git+https://github.com/phillipclapham/flowscript-ldp.git
 ```
 
-**Dependencies:** `pydantic>=2.0` (only runtime dependency). JamJet is optional — install separately for `get_jamjet_tools()`.
-
-The core package (IR models, query engine, payload, fallback, adapter, CLI) works standalone. The `ParserBridge` optionally requires the [FlowScript CLI](https://github.com/phillipclapham/flowscript) for parsing `.fs` text files into IR.
+**Core dependency:** `pydantic>=2.0`. JamJet and ldp-protocol are optional — the core package (IR models, query engine, payload, fallback, adapter, CLI) works standalone. The `ParserBridge` optionally requires the [FlowScript CLI](https://github.com/phillipclapham/flowscript) for parsing `.fs` text files into IR.
 
 ## Architecture
 
@@ -186,16 +226,18 @@ flowscript_ldp/
 ├── query.py           # 5 query operations, 3 formats each (Python port of TypeScript engine)
 ├── payload.py         # Mode 3 payload encode/decode/envelope
 ├── fallback.py        # Mode 3 → Mode 1 → Mode 0 degradation
-├── adapter.py         # Sync tool functions + get_jamjet_tools() + standalone adapter
+├── adapter.py         # Sync tools + get_jamjet_tools() + FlowScriptLdpAdapter(ProtocolAdapter)
+├── delegate.py        # FlowScriptMode3Delegate(LdpDelegate) — LDP server
 ├── round_trip.py      # Round-trip verification utilities
 └── cli.py             # Command-line interface
 ```
 
-**111 tests** covering IR models, all 5 query operations with all format variants (edge cases: cycles, diamond graphs, empty graphs, depth limiting), payload round-trips, fallback chain, adapter dispatch, JamJet tool integration, and repr output.
+**168 tests** covering IR models, all 5 query operations with all format variants (edge cases: cycles, diamond graphs, empty graphs, depth limiting), payload round-trips, fallback chain, adapter dispatch, JamJet tool integration, LDP delegate skills/identity/negotiation, ProtocolAdapter client-side bridge, and full HTTP integration round-trips (delegate server + LdpClient + adapter).
 
 ## References
 
 - **LDP Paper**: [arXiv:2603.08852](https://arxiv.org/abs/2603.08852) — Sunil Prakash, March 2026
+- **ldp-protocol**: [pypi.org/project/ldp-protocol](https://pypi.org/project/ldp-protocol/) — Standalone Python SDK for LDP (LdpDelegate, LdpClient, LdpRouter)
 - **FlowScript**: [github.com/phillipclapham/flowscript](https://github.com/phillipclapham/flowscript) — Semantic notation for cognitive graphs
 - **JamJet**: [github.com/jamjet-labs/jamjet](https://github.com/jamjet-labs/jamjet) — Agent-native runtime (Rust core, Python SDK)
 
