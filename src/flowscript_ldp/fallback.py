@@ -19,6 +19,7 @@ class FallbackChain:
 
     def __init__(self, ir: IR):
         self._ir = ir
+        self._node_map: dict[str, Node] = {n.id: n for n in ir.nodes}
 
     @property
     def ir(self) -> IR:
@@ -124,10 +125,8 @@ class FallbackChain:
 
     def _node_content(self, node_id: str) -> str:
         """Get node content by ID."""
-        for node in self._ir.nodes:
-            if node.id == node_id:
-                return node.content
-        return f"[unknown:{node_id[:8]}]"
+        node = self._node_map.get(node_id)
+        return node.content if node else f"[unknown:{node_id[:8]}]"
 
     def _infer_output_format(self, type_counts: dict[str, int]) -> str:
         """Infer expected output format from graph structure."""
@@ -259,10 +258,7 @@ class FallbackChain:
 
     def _find_node(self, node_id: str) -> Optional[Node]:
         """Find node by ID."""
-        for node in self._ir.nodes:
-            if node.id == node_id:
-                return node
-        return None
+        return self._node_map.get(node_id)
 
     # =========================================================================
     # Mode 0 → Mode 3: Parse natural language (lossy)

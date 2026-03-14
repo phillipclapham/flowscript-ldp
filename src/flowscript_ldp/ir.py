@@ -81,8 +81,13 @@ class Provenance(BaseModel):
     @field_validator("hash")
     @classmethod
     def validate_hash(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and len(v) != 64:
-            raise ValueError("Content hash must be 64 hex characters (SHA-256)")
+        if v is not None:
+            import re
+
+            if not re.fullmatch(r"[a-f0-9]{64}", v):
+                raise ValueError(
+                    "Content hash must be 64 lowercase hex characters (SHA-256)"
+                )
         return v
 
 

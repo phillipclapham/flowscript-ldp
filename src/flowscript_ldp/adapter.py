@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from dataclasses import asdict
+
 from .fallback import FallbackChain
 from .ir import IR
 from .payload import FlowScriptPayload
@@ -132,19 +134,19 @@ class FlowScriptMode3Adapter:
             if not node_id:
                 raise ValueError("why query requires node_id argument")
             r = engine.why(node_id, format="minimal")
-            return r.__dict__ if hasattr(r, "__dict__") else r
+            return asdict(r)
         elif query in ("whatIf", "what_if"):
             node_id = args.get("node_id")
             if not node_id:
                 raise ValueError("whatIf query requires node_id argument")
             r = engine.what_if(node_id, format="summary")
-            return r.__dict__ if hasattr(r, "__dict__") else r
+            return asdict(r)
         elif query == "alternatives":
             question_id = args.get("question_id")
             if not question_id:
                 raise ValueError("alternatives query requires question_id argument")
             r = engine.alternatives(question_id, format="simple")
-            return r.__dict__ if hasattr(r, "__dict__") else r
+            return asdict(r)
         else:
             raise ValueError(f"Unknown query: {query}")
 

@@ -20,10 +20,11 @@ from .ir import (
     StateFields,
     IRMetadata,
 )
-from .parser_bridge import ParserBridge
+from .parser_bridge import ParserBridge, ParserError
 from .query import QueryEngine
 from .payload import FlowScriptPayload
 from .fallback import FallbackChain
+from .adapter import FlowScriptMode3Adapter
 
 __version__ = "0.1.0"
 __all__ = [
@@ -41,7 +42,9 @@ __all__ = [
     "StateFields",
     "IRMetadata",
     "ParserBridge",
+    "ParserError",
     "QueryEngine",
     "FlowScriptPayload",
     "FallbackChain",
+    "FlowScriptMode3Adapter",
 ]

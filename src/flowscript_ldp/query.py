@@ -14,8 +14,7 @@ Operations:
 
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -683,8 +682,7 @@ class QueryEngine:
         assert self._ir is not None
         for state in self._ir.states:
             if state.type.value == "decided":
-                state_node = self._node_map.get(state.node_id)
-                if state_node and state_node.content == node.content:
+                if state.node_id == node.id:
                     rationale = state.fields.rationale if state.fields else None
                     on = state.fields.on if state.fields else None
                     return True, rationale, on
