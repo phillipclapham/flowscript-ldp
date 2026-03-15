@@ -807,8 +807,7 @@ class QueryEngine:
         key_factors = list(
             set(
                 t.axis
-                for t in (chosen_detail.tensions or [])
-                if chosen_detail and chosen_detail.tensions
+                for t in (chosen_detail.tensions if chosen_detail and chosen_detail.tensions else [])
             )
         )
 
